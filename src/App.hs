@@ -36,9 +36,8 @@ defaultMainApi :: IO ()
 defaultMainApi = do
   (config, loggerMiddleware) <- setup
   runSqlPool doMigrations $ configPool config
-  let port = configPort config
   putStrLn $ "app running on port " <> show (configPort config)
-  run port . loggerMiddleware $ app config
+  run (configPort config) . loggerMiddleware $ app config
 
 type Api = "v0" :> (ApiSearch :<|> ApiStatus)
 

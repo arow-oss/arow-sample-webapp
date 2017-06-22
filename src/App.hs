@@ -8,15 +8,18 @@ import Network.Wai (Application, Middleware, Request)
 import Network.Wai.Handler.Warp (run)
 import Network.Wai.Middleware.RequestLogger
        (logStdout, logStdoutDev)
+import Database.Persist.Sql (runSqlPool)
 import Servant
        ((:>), (:<|>)(..), Context(..), Get, Handler, JSON, Post,
         ServantErr, Server, ServerT, enter, serve)
 import Servant.Server.Experimental.Auth (AuthHandler)
 
 import App.Config
-       (Config(configEnvironment, configPort), configFromEnv)
+       (Config(configEnvironment, configPool, configPort), configFromEnv)
+import App.Db (doMigrations)
 import App.Environment
        (Environment(Development, Production, Testing))
+import App.Monad (AppM)
 
 requestLoggerMiddleware :: Environment -> Middleware
 requestLoggerMiddleware Testing = id
@@ -32,11 +35,10 @@ setup = do
 defaultMainApi :: IO ()
 defaultMainApi = do
   (config, loggerMiddleware) <- setup
+  runSqlPool doMigrations $ configPool config
   let port = configPort config
   putStrLn $ "app running on port " <> show (configPort config)
   run port . loggerMiddleware $ app config
-
-type AppM = ReaderT Config Handler
 
 type Api = "v0" :> (ApiSearch :<|> ApiStatus)
 

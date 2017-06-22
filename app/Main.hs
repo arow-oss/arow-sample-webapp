@@ -1,6 +1,6 @@
 module Main where
 
-import App (defaultMain)
+import App (defaultMainApi)
 
 main :: IO ()
-main = defaultMain
+main = defaultMainApi

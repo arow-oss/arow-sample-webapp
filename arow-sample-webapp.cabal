@@ -15,11 +15,46 @@ cabal-version:       >=1.10
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Lib
-  build-depends:       base >= 4.7 && < 5
+  exposed-modules:     App
+                     , App.Config
+                     , App.Environment
+  build-depends:       base >= 4.9 && < 5
+                     -- , aeson
+                     -- , base64-bytestring
+                     -- , bytestring
+                     -- , classy-prelude
+                     -- , exceptions
+                     -- , from-sum
+                     -- , http-conduit
+                     -- , http-types
+                     -- , lens
+                     -- , lens-aeson
+                     -- , monad-control
+                     -- , monad-logger
+                     , mtl
+                     , natural-transformation
+                     , persistent
+                     , read-env-var
+                     , servant
+                     , servant-server
+                     -- , text
+                     -- , time
+                     , transformers
+                     -- , transformers-base
+                     -- , twitter-app-only
+                     -- , twitter-types
+                     , wai
+                     , wai-extra
+                     , warp
   default-language:    Haskell2010
+  default-extensions:  DataKinds
+                     , OverloadedStrings
+                     , RankNTypes
+                     , TypeOperators
+  other-extensions:    QuasiQuotes
+                     , TemplateHaskell
 
-executable arow-sample-webapp-exe
+executable arow-sample-webapp
   hs-source-dirs:      app
   main-is:             Main.hs
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N

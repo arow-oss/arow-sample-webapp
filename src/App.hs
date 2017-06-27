@@ -1,17 +1,28 @@
 module App where
 
+import Control.Monad.Except (throwError)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ReaderT, runReaderT)
 import Control.Natural ((:~>)(NT))
+import Data.Aeson (FromJSON, ToJSON)
 import Data.Proxy (Proxy(Proxy))
 import Data.Semigroup ((<>))
+import GHC.Generics (Generic)
 import Network.Wai (Application, Middleware, Request)
 import Network.Wai.Handler.Warp (run)
 import Network.Wai.Middleware.RequestLogger
        (logStdout, logStdoutDev)
 import Database.Persist.Sql (runSqlPool)
 import Servant
-       ((:>), (:<|>)(..), Context(..), Get, Handler, JSON, Post,
-        ServantErr, Server, ServerT, enter, serve)
+       ((:>), (:<|>)(..), Context(..), Get, Handler, Header, Headers,
+        JSON, NoContent(NoContent), Post, PostNoContent, ReqBody,
+        ServantErr, Server, ServerT, enter, err401, serve,
+        serveWithContext)
+import Servant.Auth.Server
+       (Auth, AuthResult(Authenticated), Cookie, CookieSettings, FromJWT,
+        JWT, JWTSettings, SetCookie, ToJWT, acceptLogin,
+        defaultCookieSettings, defaultJWTSettings, generateKey, throwAll)
+import Servant.Auth.Server.SetCookieOrphan ()
 import Servant.Server.Experimental.Auth (AuthHandler)
 
 import App.Config
@@ -71,3 +82,110 @@ apiServer config = enter natTrans serverRoot
 
     trans :: forall a. AppM a -> Handler a
     trans appM = runReaderT appM config
+
+----------------
+-- Auth stuff --
+----------------
+
+data User = User { name :: String, email :: String }
+   deriving (Eq, Generic, Read, Show)
+
+instance ToJSON User
+instance ToJWT User
+instance FromJSON User
+instance FromJWT User
+
+data Login = Login { username :: String, password :: String }
+   deriving (Eq, Generic, Read, Show)
+
+instance ToJSON Login
+instance FromJSON Login
+
+
+type Protected
+     = "name" :> Get '[JSON] String
+  :<|> "email" :> Get '[JSON] String
+
+type ApiLogin =
+  "login"
+    :> ReqBody '[JSON] Login
+    :> PostNoContent
+        '[JSON]
+        (Headers
+          '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
+          NoContent
+        )
+
+-- | 'Protected' will be protected by 'auths', which we still have to specify.
+protected :: AuthResult User -> Server Protected
+protected (Authenticated user) = return (name user) :<|> return (email user)
+protected _ = throwAll err401
+
+login
+  :: CookieSettings
+  -> JWTSettings
+  -> Login
+  -> Handler
+      (Headers
+        '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
+        NoContent
+      )
+login cookieSettings jwtSettings (Login "Ali Baba" "Open Sesame") = do
+  let usr = User "Ali Baba" "ali@email.com"
+  mApplyCookies <- liftIO $ acceptLogin cookieSettings jwtSettings usr
+  case mApplyCookies of
+    Nothing           -> throwError err401
+    Just applyCookies -> return $ applyCookies NoContent
+checkCreds _ _ _ = throwError err401
+
+type TestApi auths = (Auth auths User :> Protected) :<|> ApiLogin
+
+server :: CookieSettings -> JWTSettings -> Server (TestApi auths)
+server cs jwts = protected :<|> login cs jwts
+
+-- In main, we fork the server, and allow new tokens to be created in the
+-- command line for the specified user name and email.
+mainWithJWT :: IO ()
+mainWithJWT = do
+  -- We generate the key for signing tokens. This would generally be persisted,
+  -- and kept safely
+  myKey <- generateKey
+  -- Adding some configurations. All authentications require CookieSettings to
+  -- be in the context.
+  let jwtCfg = defaultJWTSettings myKey
+      cookieCfg = defaultCookieSettings
+      cfg = cookieCfg :. jwtCfg :. EmptyContext
+      --- Here we actually make concrete
+      api = Proxy :: Proxy (TestApi '[JWT])
+  undefined
+  -- _ <-
+  --   forkIO $
+  --     run 7249 $
+  --       serveWithContext api cfg (server cookieCfg jwtCfg)
+
+  -- putStrLn "Started server on localhost:7249"
+  -- putStrLn "Enter name and email separated by a space for a new token"
+
+  -- forever $ do
+  --    xs <- words <$> getLine
+  --    case xs of
+  --      [name', email'] -> do
+  --        etoken <- makeJWT (User name' email') jwtCfg Nothing
+  --        case etoken of
+  --          Left e -> putStrLn $ "Error generating token:t" ++ show e
+  --          Right v -> putStrLn $ "New token:\t" ++ show v
+  --      _ -> putStrLn "Expecting a name and email separated by spaces"
+
+
+mainWithCookies :: IO ()
+mainWithCookies = do
+  -- We *also* need a key to sign the cookies
+  myKey <- generateKey
+  -- Adding some configurations. 'Cookie' requires, in addition to
+  -- CookieSettings, JWTSettings (for signing), so everything is just as before
+  let jwtCfg = defaultJWTSettings myKey
+      cookieCfg = defaultCookieSettings
+      cfg = cookieCfg :. jwtCfg :. EmptyContext
+      --- Here is the actual change
+      api = Proxy :: Proxy (TestApi '[Cookie])
+  run 7250 $ serveWithContext api cfg (server cookieCfg jwtCfg)

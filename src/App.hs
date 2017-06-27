@@ -19,9 +19,10 @@ import Servant
         ServantErr, Server, ServerT, enter, err401, serve,
         serveWithContext)
 import Servant.Auth.Server
-       (Auth, AuthResult(Authenticated), Cookie, CookieSettings, FromJWT,
-        JWT, JWTSettings, SetCookie, ToJWT, acceptLogin,
-        defaultCookieSettings, defaultJWTSettings, generateKey, throwAll)
+       (Auth, AuthResult(..), Cookie, CookieSettings(cookieIsSecure),
+        FromJWT, JWT, JWTSettings, IsSecure(NotSecure), SetCookie, ToJWT,
+        acceptLogin, defaultCookieSettings, defaultJWTSettings,
+        generateKey, throwAll)
 import Servant.Auth.Server.SetCookieOrphan ()
 import Servant.Server.Experimental.Auth (AuthHandler)
 
@@ -119,7 +120,9 @@ type ApiLogin =
 -- | 'Protected' will be protected by 'auths', which we still have to specify.
 protected :: AuthResult User -> Server Protected
 protected (Authenticated user) = return (name user) :<|> return (email user)
-protected _ = throwAll err401
+protected BadPassword = undefined :<|> (liftIO (print "badpassword") *> throwError err401)
+protected NoSuchUser = undefined :<|> (liftIO (print "no such user") *> throwError err401)
+protected Indefinite = undefined :<|> (liftIO (print "indefinite") *> throwError err401)
 
 login
   :: CookieSettings
@@ -134,9 +137,13 @@ login cookieSettings jwtSettings (Login "Ali Baba" "Open Sesame") = do
   let usr = User "Ali Baba" "ali@email.com"
   mApplyCookies <- liftIO $ acceptLogin cookieSettings jwtSettings usr
   case mApplyCookies of
-    Nothing           -> throwError err401
+    Nothing           -> do
+      liftIO $ print "error with mApplyCookies"
+      throwError err401
     Just applyCookies -> return $ applyCookies NoContent
-checkCreds _ _ _ = throwError err401
+login cookieSettings jwtSettings login' = do
+  liftIO $ print login'
+  throwError err401
 
 type TestApi auths = (Auth auths User :> Protected) :<|> ApiLogin
 

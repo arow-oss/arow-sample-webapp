@@ -191,7 +191,7 @@ mainWithCookies = do
   -- Adding some configurations. 'Cookie' requires, in addition to
   -- CookieSettings, JWTSettings (for signing), so everything is just as before
   let jwtCfg = defaultJWTSettings myKey
-      cookieCfg = defaultCookieSettings
+      cookieCfg = defaultCookieSettings { cookieIsSecure = NotSecure }
       cfg = cookieCfg :. jwtCfg :. EmptyContext
       --- Here is the actual change
       api = Proxy :: Proxy (TestApi '[Cookie])

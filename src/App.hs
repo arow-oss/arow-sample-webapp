@@ -196,3 +196,31 @@ mainWithCookies = do
       --- Here is the actual change
       api = Proxy :: Proxy (TestApi '[Cookie])
   run 7250 $ serveWithContext api cfg (server cookieCfg jwtCfg)
+
+-- Examples of running it:
+--
+-- $ curl -v \
+--     -X POST \
+--     -H "Content-Type: application/json" \
+--     -d '{"username": "hello", "password": "hello"}' \
+--     http://localhost:7250/login
+--
+-- $ curl -v \
+--     -X POST \
+--     -H "Content-Type: application/json" \
+--     -d '{"username": "Ali Baba", "password": "Open Sesame"}' \
+--     http://localhost:7250/login
+--
+-- $ curl -v \
+--     -H "Content-Type: application/json"
+--     -X GET \
+--     http://localhost:7250/name
+--
+-- Couldn't get this to work:
+--
+-- $ curl -v \
+--     -H "Content-Type: application/json" \
+--     -X GET \
+--     --cookie 'JWT-Cookie=eyJhbGciOiJIUzI1NiJ9.eyJkYXQiOnsiZW1haWwiOiJhbGlAZW1haWwuY29tIiwibmFtZSI6IkFsaSBCYWJhIn19.7kidGapI-GIW-Hrak-dJDIKLm4EoLu9B3IFbnq-1ggk' \
+--     -H 'X-XSRF-TOKEN: ZptXkla0OO36Ni6FAbyCJR+sVbfT0wu2HVFLe7Jn+vQ=' \
+--     http://localhost:7250/email

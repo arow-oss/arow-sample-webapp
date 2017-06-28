@@ -26,8 +26,7 @@ import Servant.Auth.Server
 import Servant.Auth.Server.SetCookieOrphan ()
 import Servant.Server.Experimental.Auth (AuthHandler)
 
-import App.Config
-       (Config(configEnvironment, configPool, configPort), configFromEnv)
+import App.Config (Config(..), configFromEnv)
 import App.Db (doMigrations)
 import App.Environment
        (Environment(Development, Production, Testing))
@@ -49,15 +48,17 @@ defaultMainApi = do
   (config, loggerMiddleware) <- setup
   runSqlPool doMigrations $ configPool config
   putStrLn $ "app running on port " <> show (configPort config)
+  -- run 7250 $ serveWithContext api context (server cookieCfg jwtCfg)
   run (configPort config) . loggerMiddleware $ app config
+  -- mainWithCookies
 
-type Api = "v0" :> (ApiSearch :<|> ApiStatus)
+type Api (auths :: [*]) = "v0" :> (ApiSearch :<|> ApiStatus)
 
 type ApiSearch = "search" :> Post '[JSON] String
 
 type ApiStatus = "status" :> Get '[JSON] Int
 
-serverRoot :: ServerT Api AppM
+serverRoot :: ServerT (Api auths) AppM
 serverRoot = search :<|> status
 
 search :: AppM String
@@ -72,10 +73,14 @@ status = pure 1
 
 -- | Given a 'Config', this returns a Wai 'Application'.
 app :: Config -> Application
-app config = serve (Proxy :: Proxy Api) $ apiServer config
+app config =
+  let context =
+        configJWTSettings config :. configCookieSettings config :. EmptyContext
+      api = apiServer config
+  in serveWithContext (Proxy :: Proxy (Api '[Cookie])) context api
 
 -- | Given a 'Config', this returns a servant 'Server' for 'Api'
-apiServer :: Config -> Server Api
+apiServer :: Config -> Server (Api auths)
 apiServer config = enter natTrans serverRoot
   where
     natTrans :: AppM :~> Handler
@@ -150,50 +155,12 @@ type TestApi auths = (Auth auths User :> Protected) :<|> ApiLogin
 server :: CookieSettings -> JWTSettings -> Server (TestApi auths)
 server cs jwts = protected :<|> login cs jwts
 
--- In main, we fork the server, and allow new tokens to be created in the
--- command line for the specified user name and email.
-mainWithJWT :: IO ()
-mainWithJWT = do
-  -- We generate the key for signing tokens. This would generally be persisted,
-  -- and kept safely
-  myKey <- generateKey
-  -- Adding some configurations. All authentications require CookieSettings to
-  -- be in the context.
-  let jwtCfg = defaultJWTSettings myKey
-      cookieCfg = defaultCookieSettings
-      cfg = cookieCfg :. jwtCfg :. EmptyContext
-      --- Here we actually make concrete
-      api = Proxy :: Proxy (TestApi '[JWT])
-  undefined
-  -- _ <-
-  --   forkIO $
-  --     run 7249 $
-  --       serveWithContext api cfg (server cookieCfg jwtCfg)
-
-  -- putStrLn "Started server on localhost:7249"
-  -- putStrLn "Enter name and email separated by a space for a new token"
-
-  -- forever $ do
-  --    xs <- words <$> getLine
-  --    case xs of
-  --      [name', email'] -> do
-  --        etoken <- makeJWT (User name' email') jwtCfg Nothing
-  --        case etoken of
-  --          Left e -> putStrLn $ "Error generating token:t" ++ show e
-  --          Right v -> putStrLn $ "New token:\t" ++ show v
-  --      _ -> putStrLn "Expecting a name and email separated by spaces"
-
-
 mainWithCookies :: IO ()
 mainWithCookies = do
-  -- We *also* need a key to sign the cookies
   myKey <- generateKey
-  -- Adding some configurations. 'Cookie' requires, in addition to
-  -- CookieSettings, JWTSettings (for signing), so everything is just as before
   let jwtCfg = defaultJWTSettings myKey
       cookieCfg = defaultCookieSettings { cookieIsSecure = NotSecure }
       cfg = cookieCfg :. jwtCfg :. EmptyContext
-      --- Here is the actual change
       api = Proxy :: Proxy (TestApi '[Cookie])
   run 7250 $ serveWithContext api cfg (server cookieCfg jwtCfg)
 

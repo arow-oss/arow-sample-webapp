@@ -216,11 +216,9 @@ mainWithCookies = do
 --     -X GET \
 --     http://localhost:7250/name
 --
--- Couldn't get this to work:
---
 -- $ curl -v \
---     -H "Content-Type: application/json" \
 --     -X GET \
---     --cookie 'JWT-Cookie=eyJhbGciOiJIUzI1NiJ9.eyJkYXQiOnsiZW1haWwiOiJhbGlAZW1haWwuY29tIiwibmFtZSI6IkFsaSBCYWJhIn19.7kidGapI-GIW-Hrak-dJDIKLm4EoLu9B3IFbnq-1ggk' \
---     -H 'X-XSRF-TOKEN: ZptXkla0OO36Ni6FAbyCJR+sVbfT0wu2HVFLe7Jn+vQ=' \
+--     -H "Content-Type: application/json" \
+--     -H 'X-XSRF-TOKEN: Oj79TaT2vRCKuVLPYZcnXi2iwEXUbxpH5m1OtkMfecA=' \
+--     --cookie 'JWT-Cookie=eyJhbGciOiJIUzI1NiJ9.eyJkYXQiOnsiZW1haWwiOiJhbGlAZW1haWwuY29tIiwibmFtZSI6IkFsaSBCYWJhIn19.R-jyWgSpyGdSLJ9KhHmx6O9xQ9CLsHgEp05edIE3fpQ; XSRF-TOKEN=Oj79TaT2vRCKuVLPYZcnXi2iwEXUbxpH5m1OtkMfecA=' \
 --     http://localhost:7250/email

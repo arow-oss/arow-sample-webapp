@@ -22,6 +22,8 @@ library
                      , App.Monad
   build-depends:       base >= 4.9 && < 5
                      , aeson
+                     , bytestring
+                     , jose
                      , monad-logger
                      , mtl
                      , natural-transformation

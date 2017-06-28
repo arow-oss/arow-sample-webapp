@@ -1,7 +1,10 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module App.Db where
+module App.Db
+  ( module App.Db
+  , module App.Db.Types
+  ) where
 
 import Control.Monad.Reader (ReaderT, reader)
 import Data.Text (Text)
@@ -12,41 +15,42 @@ import Database.Persist.TH
        (mkPersist, persistLowerCase, share, sqlSettings, mkMigrate)
 
 import App.Config (Config(configPool))
+import App.Db.Types (PasswordHash(..))
 import App.Monad (AppM)
 
 $(share [mkPersist sqlSettings, mkMigrate "migrateAll"]
   [persistLowerCase|
     Admin
-      email    Text
-      password Text
-      name     Text
+      email        Text
+      passwordHash PasswordHash
+      name         Text
 
       UniqueAdminEmail email
 
-      deriving Eq
-      deriving Read
-      deriving Show
+      deriving     Eq
+      deriving     Read
+      deriving     Show
 
     CompanyUser
-      email    Text
-      name     Text
-      password Text
+      email        Text
+      passwordHash PasswordHash
+      name         Text
 
       UniqueCompanyUserEmail email
 
-      deriving Eq
-      deriving Read
-      deriving Show
+      deriving     Eq
+      deriving     Read
+      deriving     Show
 
     User
-      email    Text
-      name     Text
-      password Text
+      email        Text
+      passwordHash PasswordHash
+      name         Text
 
       UniqueUserEmail
 
-      deriving Eq
-      deriving Show
+      deriving     Eq
+      deriving     Show
   |])
 
 -- | Run all sql migration.

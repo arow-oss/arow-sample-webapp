@@ -18,8 +18,10 @@ library
   exposed-modules:     App
                      , App.Config
                      , App.Db
+                     , App.Db.Types
                      , App.Environment
                      , App.Monad
+                     , App.Password
   build-depends:       base >= 4.9 && < 5
                      , aeson
                      , bytestring
@@ -31,6 +33,7 @@ library
                      , persistent-postgresql
                      , persistent-template
                      , read-env-var
+                     , scrypt
                      , servant
                      , servant-auth-server
                      , servant-server

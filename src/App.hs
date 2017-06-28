@@ -2,7 +2,7 @@ module App where
 
 import Control.Monad.Except (throwError)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Reader (ReaderT, runReaderT)
+import Control.Monad.Reader (ReaderT, reader, runReaderT)
 import Control.Natural ((:~>)(NT))
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Proxy (Proxy(Proxy))
@@ -52,14 +52,24 @@ defaultMainApi = do
   run (configPort config) . loggerMiddleware $ app config
   -- mainWithCookies
 
-type Api (auths :: [*]) = "v0" :> (ApiSearch :<|> ApiStatus)
+type Api (auths :: [*]) = "v0" :> (ApiLogin :<|> ApiSearch :<|> ApiStatus)
 
 type ApiSearch = "search" :> Post '[JSON] String
 
 type ApiStatus = "status" :> Get '[JSON] Int
 
+type ApiLogin =
+  "login"
+    :> ReqBody '[JSON] Login
+    :> PostNoContent
+        '[JSON]
+        (Headers
+          '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
+          NoContent
+        )
+
 serverRoot :: ServerT (Api auths) AppM
-serverRoot = search :<|> status
+serverRoot = login :<|> search :<|> status
 
 search :: AppM String
 search = do
@@ -70,6 +80,26 @@ search = do
 
 status :: AppM Int
 status = pure 1
+
+login
+  :: Login
+  -> AppM
+      (Headers
+        '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
+        NoContent
+      )
+login (Login "Ali Baba" "Open Sesame") = do
+  -- TODO: Rewrite this to actually try logging in the real user.
+  cookieSettings <- reader configCookieSettings
+  jwtSettings <- reader configJWTSettings
+  let usr = User "Ali Baba" "ali@email.com"
+  mApplyCookies <- liftIO $ acceptLogin cookieSettings jwtSettings usr
+  case mApplyCookies of
+    Nothing           -> do
+      liftIO $ print "error with mApplyCookies"
+      throwError err401
+    Just applyCookies -> return $ applyCookies NoContent
+login _ = throwError err401
 
 -- | Given a 'Config', this returns a Wai 'Application'.
 app :: Config -> Application
@@ -112,16 +142,6 @@ type Protected
      = "name" :> Get '[JSON] String
   :<|> "email" :> Get '[JSON] String
 
-type ApiLogin =
-  "login"
-    :> ReqBody '[JSON] Login
-    :> PostNoContent
-        '[JSON]
-        (Headers
-          '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
-          NoContent
-        )
-
 -- | 'Protected' will be protected by 'auths', which we still have to specify.
 protected :: AuthResult User -> Server Protected
 protected (Authenticated user) = return (name user) :<|> return (email user)
@@ -129,7 +149,7 @@ protected BadPassword = undefined :<|> (liftIO (print "badpassword") *> throwErr
 protected NoSuchUser = undefined :<|> (liftIO (print "no such user") *> throwError err401)
 protected Indefinite = undefined :<|> (liftIO (print "indefinite") *> throwError err401)
 
-login
+login'
   :: CookieSettings
   -> JWTSettings
   -> Login
@@ -138,7 +158,7 @@ login
         '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
         NoContent
       )
-login cookieSettings jwtSettings (Login "Ali Baba" "Open Sesame") = do
+login' cookieSettings jwtSettings (Login "Ali Baba" "Open Sesame") = do
   let usr = User "Ali Baba" "ali@email.com"
   mApplyCookies <- liftIO $ acceptLogin cookieSettings jwtSettings usr
   case mApplyCookies of
@@ -146,14 +166,14 @@ login cookieSettings jwtSettings (Login "Ali Baba" "Open Sesame") = do
       liftIO $ print "error with mApplyCookies"
       throwError err401
     Just applyCookies -> return $ applyCookies NoContent
-login cookieSettings jwtSettings login' = do
+login' cookieSettings jwtSettings login' = do
   liftIO $ print login'
   throwError err401
 
 type TestApi auths = (Auth auths User :> Protected) :<|> ApiLogin
 
 server :: CookieSettings -> JWTSettings -> Server (TestApi auths)
-server cs jwts = protected :<|> login cs jwts
+server cs jwts = protected :<|> login' cs jwts
 
 mainWithCookies :: IO ()
 mainWithCookies = do

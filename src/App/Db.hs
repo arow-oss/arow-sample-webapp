@@ -50,7 +50,7 @@ $(share [mkPersist sqlSettings, mkMigrate "migrateAll"]
       passwordHash PasswordHash
       name         Text
 
-      UniqueUserEmail
+      UniqueUserEmail email
 
       deriving     Eq
       deriving     Show

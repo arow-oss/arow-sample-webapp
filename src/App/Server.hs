@@ -7,6 +7,7 @@ import Control.Natural ((:~>)(NT))
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Proxy (Proxy(Proxy))
 import Data.Semigroup ((<>))
+import Data.Text (Text)
 import GHC.Generics (Generic)
 import Network.Wai (Application, Middleware, Request)
 import Network.Wai.Handler.Warp (run)
@@ -27,7 +28,7 @@ import Servant.Auth.Server.SetCookieOrphan ()
 import Servant.Server.Experimental.Auth (AuthHandler)
 
 import App.Config (Config(..), configFromEnv)
-import App.Db (doMigrations)
+import App.Db (dbCheckUserPassword, doMigrations, runDb)
 import App.Environment
        (Environment(Development, Production, Testing))
 import App.Monad (AppM)
@@ -48,9 +49,7 @@ defaultMainServer = do
   (config, loggerMiddleware) <- setup
   runSqlPool doMigrations $ configPool config
   putStrLn $ "app running on port " <> show (configPort config)
-  -- run 7250 $ serveWithContext api context (server cookieCfg jwtCfg)
   run (configPort config) . loggerMiddleware $ app config
-  -- mainWithCookies
 
 type Api (auths :: [*]) = "v0" :> (ApiLogin :<|> ApiSearch :<|> ApiStatus)
 
@@ -81,6 +80,13 @@ search = do
 status :: AppM Int
 status = pure 1
 
+data Login = Login { loginEmail :: Text, loginPassword :: Text }
+   deriving (Eq, Generic, Read, Show)
+
+instance ToJSON Login
+instance FromJSON Login
+
+
 login
   :: Login
   -> AppM
@@ -88,18 +94,17 @@ login
         '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
         NoContent
       )
-login (Login "Ali Baba" "Open Sesame") = do
-  -- TODO: Rewrite this to actually try logging in the real user.
+login (Login email pass) = do
   cookieSettings <- reader configCookieSettings
   jwtSettings <- reader configJWTSettings
-  let usr = User "Ali Baba" "ali@email.com"
-  mApplyCookies <- liftIO $ acceptLogin cookieSettings jwtSettings usr
-  case mApplyCookies of
-    Nothing           -> do
-      liftIO $ print "error with mApplyCookies"
-      throwError err401
-    Just applyCookies -> return $ applyCookies NoContent
-login _ = throwError err401
+  maybeUserId <- runDb $ dbCheckUserPassword email pass
+  case maybeUserId of
+    Nothing -> throwError err401
+    Just userId -> do
+      mApplyCookies <- liftIO $ acceptLogin cookieSettings jwtSettings userId
+      case mApplyCookies of
+        Nothing -> throwError err401
+        Just applyCookies -> pure $ applyCookies NoContent
 
 -- | Given a 'Config', this returns a Wai 'Application'.
 app :: Config -> Application
@@ -123,66 +128,55 @@ apiServer config = enter natTrans serverRoot
 -- Auth stuff --
 ----------------
 
-data User = User { name :: String, email :: String }
-   deriving (Eq, Generic, Read, Show)
+-- data User = User { name :: String, email :: String }
+--    deriving (Eq, Generic, Read, Show)
 
-instance ToJSON User
-instance ToJWT User
-instance FromJSON User
-instance FromJWT User
+-- instance ToJSON User
+-- instance ToJWT User
+-- instance FromJSON User
+-- instance FromJWT User
 
-data Login = Login { username :: String, password :: String }
-   deriving (Eq, Generic, Read, Show)
+-- data Login = Login { loginEmail :: Text, loginPassword :: Text }
+--    deriving (Eq, Generic, Read, Show)
 
-instance ToJSON Login
-instance FromJSON Login
+-- instance ToJSON Login
+-- instance FromJSON Login
 
 
-type Protected
-     = "name" :> Get '[JSON] String
-  :<|> "email" :> Get '[JSON] String
+-- type Protected
+--      = "name" :> Get '[JSON] String
+--   :<|> "email" :> Get '[JSON] String
 
--- | 'Protected' will be protected by 'auths', which we still have to specify.
-protected :: AuthResult User -> Server Protected
-protected (Authenticated user) = return (name user) :<|> return (email user)
-protected BadPassword = undefined :<|> (liftIO (print "badpassword") *> throwError err401)
-protected NoSuchUser = undefined :<|> (liftIO (print "no such user") *> throwError err401)
-protected Indefinite = undefined :<|> (liftIO (print "indefinite") *> throwError err401)
+-- -- | 'Protected' will be protected by 'auths', which we still have to specify.
+-- protected :: AuthResult User -> Server Protected
+-- protected (Authenticated user) = return (name user) :<|> return (email user)
+-- protected BadPassword = undefined :<|> (liftIO (print "badpassword") *> throwError err401)
+-- protected NoSuchUser = undefined :<|> (liftIO (print "no such user") *> throwError err401)
+-- protected Indefinite = undefined :<|> (liftIO (print "indefinite") *> throwError err401)
 
-login'
-  :: CookieSettings
-  -> JWTSettings
-  -> Login
-  -> Handler
-      (Headers
-        '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
-        NoContent
-      )
-login' cookieSettings jwtSettings (Login "Ali Baba" "Open Sesame") = do
-  let usr = User "Ali Baba" "ali@email.com"
-  mApplyCookies <- liftIO $ acceptLogin cookieSettings jwtSettings usr
-  case mApplyCookies of
-    Nothing           -> do
-      liftIO $ print "error with mApplyCookies"
-      throwError err401
-    Just applyCookies -> return $ applyCookies NoContent
-login' cookieSettings jwtSettings login' = do
-  liftIO $ print login'
-  throwError err401
+-- login'
+--   :: CookieSettings
+--   -> JWTSettings
+--   -> Login
+--   -> Handler
+--       (Headers
+--         '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
+--         NoContent
+--       )
+-- login' cookieSettings jwtSettings (Login email pass) = do
+--   maybeUserId <- runDb $ dbCheckUserPassword email pass
+--   case maybeUserId of
+--     Nothing -> throwError err401
+--     Just userId -> do
+--       mApplyCookies <- liftIO $ acceptLogin cookieSettings jwtSettings usr
+--       case mApplyCookies of
+--         Nothing -> throwError err401
+--         Just applyCookies -> pure $ applyCookies NoContent
 
-type TestApi auths = (Auth auths User :> Protected) :<|> ApiLogin
+-- type TestApi auths = (Auth auths User :> Protected) :<|> ApiLogin
 
-server :: CookieSettings -> JWTSettings -> Server (TestApi auths)
-server cs jwts = protected :<|> login' cs jwts
-
-mainWithCookies :: IO ()
-mainWithCookies = do
-  myKey <- generateKey
-  let jwtCfg = defaultJWTSettings myKey
-      cookieCfg = defaultCookieSettings { cookieIsSecure = NotSecure }
-      cfg = cookieCfg :. jwtCfg :. EmptyContext
-      api = Proxy :: Proxy (TestApi '[Cookie])
-  run 7250 $ serveWithContext api cfg (server cookieCfg jwtCfg)
+-- server :: CookieSettings -> JWTSettings -> Server (TestApi auths)
+-- server cs jwts = protected :<|> login' cs jwts
 
 -- Examples of running it:
 --

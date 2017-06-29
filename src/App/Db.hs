@@ -11,15 +11,17 @@ import Control.Monad.Reader (ReaderT, reader)
 import Data.Text (Text)
 import Database.Persist.Postgresql
        (Entity(..), EntityField(..), Key(..), SqlBackend(..),
-        ToBackendKey, Unique, fromSqlKey, insertUnique, runMigration,
-        runSqlPool, toSqlKey)
+        ToBackendKey, Unique, fromSqlKey, getBy, insertUnique,
+        runMigration, runSqlPool, toSqlKey)
 import Database.Persist.TH
        (mkPersist, persistLowerCase, share, sqlSettings, mkMigrate)
 
 import App.Config (Config(configPool))
 import App.Db.Types (PasswordHash(..))
 import App.Monad (AppM)
-import App.Password (hashPassword)
+import App.Password
+       (PasswordCheck(PasswordCorrect, PasswordIncorrect), checkPassword,
+        hashPassword)
 
 $(share [mkPersist sqlSettings, mkMigrate "migrateAll"]
   [persistLowerCase|
@@ -66,18 +68,28 @@ runDb query = reader configPool >>= runSqlPool query
 
 dbAddAdmin
   :: Text -> Text -> Text -> ReaderT SqlBackend AppM (Maybe (Key Admin))
-dbAddAdmin email password name = do
-  hash <- hashPassword password
+dbAddAdmin email pass name = do
+  hash <- hashPassword pass
   insertUnique $ Admin email hash name
 
 dbAddCompanyUser
   :: Text -> Text -> Text -> ReaderT SqlBackend AppM (Maybe (Key CompanyUser))
-dbAddCompanyUser email password name = do
-  hash <- hashPassword password
+dbAddCompanyUser email pass name = do
+  hash <- hashPassword pass
   insertUnique $ CompanyUser email hash name
 
 dbAddUser
   :: Text -> Text -> Text -> ReaderT SqlBackend AppM (Maybe (Key User))
-dbAddUser email password name = do
-  hash <- hashPassword password
+dbAddUser email pass name = do
+  hash <- hashPassword pass
   insertUnique $ User email hash name
+
+dbCheckUserPassword :: Text -> Text -> ReaderT SqlBackend AppM (Maybe (Key User))
+dbCheckUserPassword email pass = do
+  maybeUser <- getBy $ UniqueUserEmail email
+  case maybeUser of
+    Nothing -> pure Nothing
+    Just (Entity userId (User _ userPasswordHash _)) ->
+      case checkPassword pass userPasswordHash of
+        PasswordCorrect -> pure (Just userId)
+        PasswordIncorrect -> pure Nothing

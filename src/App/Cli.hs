@@ -1,22 +1,32 @@
 module App.Cli where
 
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (runReaderT)
-import Data.Text (Text, pack)
+import Data.Text (Text, pack, unpack)
 import Options.Applicative
        (InfoMod, Parser, ParserInfo, ReadM, argument, auto, command,
         execParser, fullDesc, header, helper, info, metavar, progDesc,
         str, subparser)
 import Data.Semigroup ((<>))
 import Servant (runHandler)
+import System.Exit (ExitCode(ExitFailure), exitWith)
 
-import App.Config (Config(..), configFromEnv)
-import App.Db (Key, SqlBackend, ToBackendKey, toSqlKey)
+import App.Config (configFromEnv)
+import App.Db
+       (Key(..), SqlBackend, ToBackendKey, fromSqlKey, dbAddAdmin,
+        dbAddCompanyUser, dbAddUser, runDb, toSqlKey)
 import App.Monad (AppM)
 
 data AddAdminOpts = AddAdminOpts
   { addAdminEmail :: Text
   , addAdminPassword :: Text
   , addAdminName :: Text
+  } deriving (Eq, Read, Show)
+
+data AddCompanyUserOpts = AddCompanyUserOpts
+  { addCompanyUserEmail :: Text
+  , addCompanyUserPassword :: Text
+  , addCompanyUserName :: Text
   } deriving (Eq, Read, Show)
 
 data AddUserOpts = AddUserOpts
@@ -28,6 +38,7 @@ data AddUserOpts = AddUserOpts
 -- | Sum-type to represent all possible commands.
 data Command
   = AddAdmin AddAdminOpts
+  | AddCompanyUser AddCompanyUserOpts
   | AddUser AddUserOpts
   deriving (Eq, Read, Show)
 
@@ -55,6 +66,19 @@ addAdminParserInfo =
         <$> argument txt (metavar "ADMIN_EMAIL")
         <*> argument txt (metavar "ADMIN_PASSWORD")
         <*> argument txt (metavar "ADMIN_NAME")
+
+addCompanyUserParserInfo :: ParserInfo Command
+addCompanyUserParserInfo =
+  info
+    (helper <*> fmap AddCompanyUser addCompanyUserParser)
+    (fullDesc `mappend` progDesc "Add a new user.")
+  where
+    addCompanyUserParser :: Parser AddCompanyUserOpts
+    addCompanyUserParser =
+      AddCompanyUserOpts
+        <$> argument txt (metavar "COMPANY_USER_EMAIL")
+        <*> argument txt (metavar "COMPANY_USER_PASSWORD")
+        <*> argument txt (metavar "COMPANY_USER_NAME")
 
 addUserParserInfo :: ParserInfo Command
 addUserParserInfo =
@@ -88,6 +112,7 @@ parseOptions = execParser topOpts
     commandSubParser =
       subparser $
         command "add-admin" addAdminParserInfo `mappend`
+        command "add-company-user" addCompanyUserParserInfo `mappend`
         command "add-user" addUserParserInfo
 
 runCommand :: Command -> IO ()
@@ -101,21 +126,46 @@ runCommand cmd = do
     go :: Command -> AppM ()
     go (AddAdmin addAdminOpts) =
       runAddAdminCmd addAdminOpts
+    go (AddCompanyUser addCompanyUserOpts) =
+      runAddCompanyUserCmd addCompanyUserOpts
     go (AddUser addUserOpts) =
       runAddUserCmd addUserOpts
 
 runAddAdminCmd :: AddAdminOpts -> AppM ()
 runAddAdminCmd (AddAdminOpts email password name) = do
-  undefined
-  -- (Entity companyUserId _) <- dbCreateCompanyUser companyId email name password
-  -- putStrLn $
-  --   "Created company user \"" <> name <> "\" with id: " <>
-  --   tshow (fromSqlKey companyUserId)
+  maybeAdminKey <- runDb $ dbAddAdmin email password name
+  case maybeAdminKey of
+    Nothing ->
+      die $ "Admin with email address " <> unpack email <> " already exists."
+    Just adminKey ->
+      liftIO . putStrLn $
+        "Successfully added Admin.  ID: " <> show (fromSqlKey adminKey)
 
 runAddUserCmd :: AddUserOpts -> AppM ()
 runAddUserCmd (AddUserOpts email password name) = do
-  undefined
-  -- (Entity companyUserId _) <- dbCreateCompanyUser companyId email name password
-  -- putStrLn $
-  --   "Created company user \"" <> name <> "\" with id: " <>
-  --   tshow (fromSqlKey companyUserId)
+  maybeUserKey <- runDb $ dbAddUser email password name
+  case maybeUserKey of
+    Nothing ->
+      die $ "User with email address " <> unpack email <> " already exists."
+    Just userKey ->
+      liftIO . putStrLn $
+        "Successfully added User.  ID: " <> show (fromSqlKey userKey)
+
+runAddCompanyUserCmd :: AddCompanyUserOpts -> AppM ()
+runAddCompanyUserCmd (AddCompanyUserOpts email password name) = do
+  maybeCompanyUserKey <- runDb $ dbAddCompanyUser email password name
+  case maybeCompanyUserKey of
+    Nothing ->
+      die $
+        "Company User with email address " <>
+        unpack email <>
+        " already exists."
+    Just companyUserKey ->
+      liftIO . putStrLn $
+        "Successfully added Company User.  ID: " <>
+        show (fromSqlKey companyUserKey)
+
+die :: MonadIO m => String -> m a
+die msg = do
+  liftIO . putStrLn $ "ERROR: " <> msg
+  liftIO . exitWith $ ExitFailure 1

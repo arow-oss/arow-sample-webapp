@@ -4,13 +4,17 @@
 module App.Db
   ( module App.Db
   , module App.Db.Types
+  , module Database.Persist
+  , SqlBackend
+  , toSqlKey
   ) where
 
 import Control.Monad.Reader (ReaderT, reader)
 import Data.Text (Text)
 import Database.Persist
-       (Entity(..), EntityField(..), Key(..), Unique)
-import Database.Persist.Postgresql (SqlBackend(..), runMigration, runSqlPool )
+       (Entity(..), EntityField(..), Key(..), ToBackendKey, Unique)
+import Database.Persist.Postgresql
+       (SqlBackend(..), runMigration, runSqlPool, toSqlKey)
 import Database.Persist.TH
        (mkPersist, persistLowerCase, share, sqlSettings, mkMigrate)
 

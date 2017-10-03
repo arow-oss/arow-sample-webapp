@@ -49,4 +49,3 @@ checkPassword password passwordHash =
   in case res of
        True -> PasswordCorrect
        False -> PasswordIncorrect
-

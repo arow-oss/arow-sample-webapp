@@ -19,12 +19,6 @@ import Servant
         JSON, NoContent(NoContent), Post, PostNoContent, ReqBody,
         ServantErr, Server, ServerT, enter, err401, serve,
         serveWithContext)
-import Servant.Auth.Server
-       (Auth, AuthResult(..), Cookie, CookieSettings(cookieIsSecure),
-        FromJWT, JWT, JWTSettings, IsSecure(NotSecure), SetCookie, ToJWT,
-        acceptLogin, defaultCookieSettings, defaultJWTSettings,
-        generateKey, throwAll)
-import Servant.Auth.Server.SetCookieOrphan ()
 import Servant.Server.Experimental.Auth (AuthHandler)
 
 import App.Config (Config(..), configFromEnv)
@@ -62,10 +56,11 @@ type ApiLogin =
     :> ReqBody '[JSON] Login
     :> PostNoContent
         '[JSON]
-        (Headers
-          '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
-          NoContent
-        )
+        -- (Headers
+        --   '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
+        --   NoContent
+        -- )
+        NoContent
 
 serverRoot :: ServerT (Api auths) AppM
 serverRoot = login :<|> search :<|> status
@@ -90,29 +85,32 @@ instance FromJSON Login
 login
   :: Login
   -> AppM
-      (Headers
-        '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
+      -- (Headers
+      --   '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
         NoContent
-      )
+      -- )
 login (Login email pass) = do
-  cookieSettings <- reader configCookieSettings
-  jwtSettings <- reader configJWTSettings
-  maybeUserId <- runDb $ dbCheckUserPassword email pass
-  case maybeUserId of
-    Nothing -> throwError err401
-    Just userId -> do
-      mApplyCookies <- liftIO $ acceptLogin cookieSettings jwtSettings userId
-      case mApplyCookies of
-        Nothing -> throwError err401
-        Just applyCookies -> pure $ applyCookies NoContent
+  undefined
+  -- cookieSettings <- reader configCookieSettings
+  -- jwtSettings <- reader configJWTSettings
+  -- maybeUserId <- runDb $ dbCheckUserPassword email pass
+  -- case maybeUserId of
+  --   Nothing -> throwError err401
+  --   Just userId -> do
+  --     mApplyCookies <- liftIO $ acceptLogin cookieSettings jwtSettings userId
+  --     case mApplyCookies of
+  --       Nothing -> throwError err401
+  --       Just applyCookies -> pure $ applyCookies NoContent
 
 -- | Given a 'Config', this returns a Wai 'Application'.
 app :: Config -> Application
 app config =
   let context =
-        configJWTSettings config :. configCookieSettings config :. EmptyContext
+        -- configJWTSettings config :. configCookieSettings config :. EmptyContext
+        EmptyContext
       api = apiServer config
-  in serveWithContext (Proxy :: Proxy (Api '[Cookie])) context api
+  -- in serveWithContext (Proxy :: Proxy (Api '[Cookie])) context api
+  in serveWithContext (Proxy :: Proxy (Api '[])) context api
 
 -- | Given a 'Config', this returns a servant 'Server' for 'Api'
 apiServer :: Config -> Server (Api auths)

@@ -38,7 +38,7 @@ library
                      , read-env-var
                      , scrypt
                      , servant
-                     , servant-auth-server
+                     , servant-auth-cookie
                      , servant-server
                      , text
                      , transformers

@@ -101,13 +101,13 @@ login
 login cookieSettings randomSource serverKey (Login email pass) = do
   maybeUserId <- runDb $ dbCheckUserPassword email pass
   case maybeUserId of
-    Nothing   -> return $ addHeader emptyEncryptedSession (loginPage False)
+    Nothing   -> pure undefined -- $ addHeader emptyEncryptedSession (loginPage False)
     Just uid  ->
       addSession
         cookieSettings
         randomSource
         serverKey
-        (User lfUsername lfPassword)
+        (User email pass)
         (pure ())
       -- (redirectPage "/private" "Session has been started")
 

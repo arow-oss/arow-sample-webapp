@@ -27,7 +27,9 @@ library
   build-depends:       base >= 4.9 && < 5
                      , aeson
                      , bytestring
-                     , jose
+                     , cereal
+                     , data-default
+                     , exceptions
                      , monad-logger
                      , mtl
                      , natural-transformation

@@ -1,12 +1,17 @@
 module App.Server where
 
 import Control.Monad.Except (throwError)
+import Control.Monad.Catch (catch)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ReaderT, reader, runReaderT)
 import Control.Natural ((:~>)(NT))
 import Data.Aeson (FromJSON, ToJSON)
+import Data.ByteString.Lazy (fromStrict)
+import Data.ByteString.Char8 (pack)
+import Data.Default (def)
 import Data.Proxy (Proxy(Proxy))
 import Data.Semigroup ((<>))
+import Data.Serialize (Serialize)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import Network.Wai (Application, Middleware, Request)
@@ -17,9 +22,13 @@ import Database.Persist.Sql (runSqlPool)
 import Servant
        ((:>), (:<|>)(..), Context(..), Get, Handler, Header, Headers,
         JSON, NoContent(NoContent), Post, PostNoContent, ReqBody,
-        ServantErr, Server, ServerT, enter, err401, serve,
+        ServantErr, Server, ServerT, enter, err401, err403, errBody, serve,
         serveWithContext)
-import Servant.Server.Experimental.Auth (AuthHandler)
+import Servant.Server.Experimental.Auth (AuthHandler, mkAuthHandler)
+import Servant.Server.Experimental.Auth.Cookie
+       (AuthCookieData, AuthCookieException, AuthCookieSettings,
+        PersistentServerKey, WithMetadata, acsCookieFlags, getSession,
+        mkPersistentServerKey)
 
 import App.Config (Config(..), configFromEnv)
 import App.Db (dbCheckUserPassword, doMigrations, runDb)
@@ -45,7 +54,7 @@ defaultMainServer = do
   putStrLn $ "app running on port " <> show (configPort config)
   run (configPort config) . loggerMiddleware $ app config
 
-type Api (auths :: [*]) = "v0" :> (ApiLogin :<|> ApiSearch :<|> ApiStatus)
+type Api = "v0" :> (ApiLogin :<|> ApiSearch :<|> ApiStatus)
 
 type ApiSearch = "search" :> Post '[JSON] String
 
@@ -62,7 +71,7 @@ type ApiLogin =
         -- )
         NoContent
 
-serverRoot :: ServerT (Api auths) AppM
+serverRoot :: ServerT Api AppM
 serverRoot = login :<|> search :<|> status
 
 search :: AppM String
@@ -80,7 +89,6 @@ data Login = Login { loginEmail :: Text, loginPassword :: Text }
 
 instance ToJSON Login
 instance FromJSON Login
-
 
 login
   :: Login
@@ -102,18 +110,43 @@ login (Login email pass) = do
   --       Nothing -> throwError err401
   --       Just applyCookies -> pure $ applyCookies NoContent
 
+data User = User { name :: String, email :: String }
+   deriving (Eq, Generic, Read, Show)
+
+instance Serialize User
+
+-- TODO: See if anything breaks if we remove this line.
+type instance AuthCookieData = User
+
+-- | Custom handler that bluntly reports any occurred errors.
+authHandler
+  :: AuthCookieSettings
+  -> PersistentServerKey
+  -> AuthHandler Request (WithMetadata User)
+authHandler cookieSettings serverKey = mkAuthHandler $ \request ->
+  getSession cookieSettings serverKey request `catch` handleEx >>= maybe
+    (throwError err403 {errBody = "No cookies"})
+    return
+  where
+    handleEx :: AuthCookieException -> Handler (Maybe (WithMetadata User))
+    handleEx ex = throwError err403 {errBody = fromStrict . pack $ show ex}
+
 -- | Given a 'Config', this returns a Wai 'Application'.
 app :: Config -> Application
 app config =
-  let context =
-        -- configJWTSettings config :. configCookieSettings config :. EmptyContext
-        EmptyContext
-      api = apiServer config
-  -- in serveWithContext (Proxy :: Proxy (Api '[Cookie])) context api
-  in serveWithContext (Proxy :: Proxy (Api '[])) context api
+  -- Authentication settings.
+  -- Note that we do not use "Secure" flag here. Cookies with this flag will be
+  -- accepted only if they were transfered over https. This is a must for
+  -- production server, but is an obstacle if you want to check it without
+  -- setting up TLS.
+  let authSettings = def {acsCookieFlags = ["HttpOnly"]}
+      serverKey = mkPersistentServerKey "0123456789abcdef"
+      context = authHandler authSettings serverKey :. EmptyContext
+      api = undefined -- apiServer config
+  in serveWithContext (Proxy :: Proxy Api) context api
 
 -- | Given a 'Config', this returns a servant 'Server' for 'Api'
-apiServer :: Config -> Server (Api auths)
+apiServer :: Config -> Server Api
 apiServer config = enter natTrans serverRoot
   where
     natTrans :: AppM :~> Handler
@@ -121,6 +154,18 @@ apiServer config = enter natTrans serverRoot
 
     trans :: forall a. AppM a -> Handler a
     trans appM = runReaderT appM config
+
+-- -- | Application
+-- app :: (ServerKeySet s)
+--   => AuthCookieSettings
+--   -> IO () -- ^ An action to create a new key
+--   -> RandomSource
+--   -> s
+--   -> Application
+-- app settings generateKey rs sks = serveWithContext
+--   (Proxy :: Proxy ExampleAPI)
+--   ((authHandler settings sks) :. EmptyContext)
+--   (server settings generateKey rs sks)
 
 ----------------
 -- Auth stuff --

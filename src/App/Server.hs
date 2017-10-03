@@ -26,9 +26,9 @@ import Servant
         serveWithContext)
 import Servant.Server.Experimental.Auth (AuthHandler, mkAuthHandler)
 import Servant.Server.Experimental.Auth.Cookie
-       (AuthCookieData, AuthCookieException, AuthCookieSettings,
-        PersistentServerKey, WithMetadata, acsCookieFlags, getSession,
-        mkPersistentServerKey)
+       (AuthCookieData, AuthCookieException, AuthCookieSettings, Cookied,
+        PersistentServerKey, RandomSource, WithMetadata, acsCookieFlags,
+        getSession, mkPersistentServerKey)
 
 import App.Config (Config(..), configFromEnv)
 import App.Db (dbCheckUserPassword, doMigrations, runDb)
@@ -69,7 +69,7 @@ type ApiLogin =
         --   '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
         --   NoContent
         -- )
-        NoContent
+        (Cookied NoContent)
 
 serverRoot :: ServerT Api AppM
 serverRoot = login :<|> search :<|> status
@@ -84,21 +84,33 @@ search = do
 status :: AppM Int
 status = pure 1
 
-data Login = Login { loginEmail :: Text, loginPassword :: Text }
-   deriving (Eq, Generic, Read, Show)
+data Login = Login
+  { loginEmail :: Text
+  , loginPassword :: Text
+  } deriving (Eq, Generic, Read, Show)
 
 instance ToJSON Login
 instance FromJSON Login
 
 login
-  :: Login
-  -> AppM
-      -- (Headers
-      --   '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
-        NoContent
-      -- )
-login (Login email pass) = do
-  undefined
+  :: AuthCookieSettings
+  -> RandomSource
+  -> PersistentServerKey
+  -> Login
+  -> AppM (Cookied NoContent)
+login cookieSettings randomSource serverKey (Login email pass) = do
+  maybeUserId <- runDb $ dbCheckUserPassword email pass
+  case maybeUserId of
+    Nothing   -> return $ addHeader emptyEncryptedSession (loginPage False)
+    Just uid  ->
+      addSession
+        cookieSettings
+        randomSource
+        serverKey
+        (User lfUsername lfPassword)
+        (pure ())
+      -- (redirectPage "/private" "Session has been started")
+
   -- cookieSettings <- reader configCookieSettings
   -- jwtSettings <- reader configJWTSettings
   -- maybeUserId <- runDb $ dbCheckUserPassword email pass
@@ -110,8 +122,10 @@ login (Login email pass) = do
   --       Nothing -> throwError err401
   --       Just applyCookies -> pure $ applyCookies NoContent
 
-data User = User { name :: String, email :: String }
-   deriving (Eq, Generic, Read, Show)
+data User = User
+  { name :: Text
+  , email :: Text
+  } deriving (Eq, Generic, Read, Show)
 
 instance Serialize User
 
@@ -131,15 +145,59 @@ authHandler cookieSettings serverKey = mkAuthHandler $ \request ->
     handleEx :: AuthCookieException -> Handler (Maybe (WithMetadata User))
     handleEx ex = throwError err403 {errBody = fromStrict . pack $ show ex}
 
+-- | Implementation
+-- server ::
+--   :: AuthCookieSettings
+--   -> (IO ())
+--   -> RandomSource
+--   -> PersistentServerKey
+--   -> Server ExampleAPI
+-- server settings generateKey rs sks =
+--        serveHome
+--   :<|> serveLogin
+--   :<|> serveLoginPost
+--   :<|> serveLogout
+--   :<|> servePrivate
+--   :<|> serveWhoami
+--   :<|> serveKeys where
+
+
+--   serveHome = return homePage
+--   serveLogin = return (loginPage True)
+
+--   serveLoginPost LoginForm {..} =
+--     case userLookup lfUsername lfPassword usersDB of
+--       Nothing   -> return $ addHeader emptyEncryptedSession (loginPage False)
+--       Just uid  -> addSession'
+--         (Account uid lfUsername lfPassword)
+--         (redirectPage "/private" "Session has been started")
+
+--   serveLogout = removeSession settings (redirectPage "/" "Session has been terminated")
+
+--   serveWhoami Nothing = return $ whoamiPage Nothing
+--   serveWhoami (Just h) = do
+--     mwm <- getHeaderSession settings sks h `catch` handleEx
+--     return $ whoamiPage $ wmData <$> mwm
+--     where
+--       handleEx :: AuthCookieException -> Handler (Maybe (WithMetadata Account))
+--       handleEx _ex = return Nothing
+
+--   servePrivate = cookied settings rs sks (Proxy :: Proxy Account) servePrivate'
+
+--   servePrivate' :: Account -> Handler Markup
+--   servePrivate' (Account uid u p) = return $ privatePage uid u p
+
+--   serveKeys = keysPage False <$> getKeys sks
+
 -- | Given a 'Config', this returns a Wai 'Application'.
 app :: Config -> Application
 app config =
-  -- Authentication settings.
-  -- Note that we do not use "Secure" flag here. Cookies with this flag will be
-  -- accepted only if they were transfered over https. This is a must for
-  -- production server, but is an obstacle if you want to check it without
-  -- setting up TLS.
-  let authSettings = def {acsCookieFlags = ["HttpOnly"]}
+  let authSettings =
+        -- Note that we do not use "Secure" flag here. Cookies with this flag will be
+        -- accepted only if they were transfered over https. This is a must for
+        -- production server, but is an obstacle if you want to check it without
+        -- setting up TLS.
+        def {acsCookieFlags = ["HttpOnly"]}
       serverKey = mkPersistentServerKey "0123456789abcdef"
       context = authHandler authSettings serverKey :. EmptyContext
       api = undefined -- apiServer config

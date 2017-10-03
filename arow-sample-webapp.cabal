@@ -28,6 +28,7 @@ library
                      , aeson
                      , bytestring
                      , cereal
+                     , cryptonite
                      , data-default
                      , exceptions
                      , monad-logger

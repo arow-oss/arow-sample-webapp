@@ -5,6 +5,7 @@ import Control.Monad.Catch (catch)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ReaderT, reader, runReaderT)
 import Control.Natural ((:~>)(NT))
+import Crypto.Random (drgNew)
 import Data.Aeson (FromJSON, ToJSON)
 import Data.ByteString.Lazy (fromStrict)
 import Data.ByteString.Char8 (pack)
@@ -12,7 +13,7 @@ import Data.Default (def)
 import Data.Proxy (Proxy(Proxy))
 import Data.Semigroup ((<>))
 import Data.Serialize (Serialize)
-import Data.Text (Text)
+import Data.Text (Text, unpack)
 import GHC.Generics (Generic)
 import Network.Wai (Application, Middleware, Request)
 import Network.Wai.Handler.Warp (run)
@@ -22,13 +23,13 @@ import Database.Persist.Sql (runSqlPool)
 import Servant
        ((:>), (:<|>)(..), Context(..), Get, Handler, Header, Headers,
         JSON, NoContent(NoContent), Post, PostNoContent, ReqBody,
-        ServantErr, Server, ServerT, enter, err401, err403, errBody, serve,
-        serveWithContext)
+        ServantErr, Server, ServerT, addHeader, enter, err401, err403,
+        errBody, serve, serveWithContext)
 import Servant.Server.Experimental.Auth (AuthHandler, mkAuthHandler)
 import Servant.Server.Experimental.Auth.Cookie
        (AuthCookieData, AuthCookieException, AuthCookieSettings, Cookied,
         PersistentServerKey, RandomSource, WithMetadata, acsCookieFlags,
-        getSession, mkPersistentServerKey)
+        addSession, emptyEncryptedSession, getSession, mkPersistentServerKey, mkRandomSource)
 
 import App.Config (Config(..), configFromEnv)
 import App.Db (dbCheckUserPassword, doMigrations, runDb)
@@ -50,9 +51,10 @@ setup = do
 defaultMainServer :: IO ()
 defaultMainServer = do
   (config, loggerMiddleware) <- setup
+  randomSource <- mkRandomSource drgNew 1000
   runSqlPool doMigrations $ configPool config
   putStrLn $ "app running on port " <> show (configPort config)
-  run (configPort config) . loggerMiddleware $ app config
+  run (configPort config) . loggerMiddleware $ app config randomSource
 
 type Api = "v0" :> (ApiLogin :<|> ApiSearch :<|> ApiStatus)
 
@@ -71,8 +73,13 @@ type ApiLogin =
         -- )
         (Cookied NoContent)
 
-serverRoot :: ServerT Api AppM
-serverRoot = login :<|> search :<|> status
+serverRoot
+  :: AuthCookieSettings
+  -> RandomSource
+  -> PersistentServerKey
+  -> ServerT Api AppM
+serverRoot authSettings randomSource serverKey =
+  login authSettings randomSource serverKey :<|> search :<|> status
 
 search :: AppM String
 search = do
@@ -98,17 +105,17 @@ login
   -> PersistentServerKey
   -> Login
   -> AppM (Cookied NoContent)
-login cookieSettings randomSource serverKey (Login email pass) = do
+login authSettings randomSource serverKey (Login email pass) = do
   maybeUserId <- runDb $ dbCheckUserPassword email pass
   case maybeUserId of
-    Nothing   -> pure undefined -- $ addHeader emptyEncryptedSession (loginPage False)
-    Just uid  ->
+    Nothing   -> pure $ addHeader emptyEncryptedSession NoContent
+    Just _uid  ->
       addSession
-        cookieSettings
+        authSettings
         randomSource
         serverKey
-        (User email pass)
-        (pure ())
+        (User (unpack email) (unpack pass))
+        NoContent
       -- (redirectPage "/private" "Session has been started")
 
   -- cookieSettings <- reader configCookieSettings
@@ -123,8 +130,8 @@ login cookieSettings randomSource serverKey (Login email pass) = do
   --       Just applyCookies -> pure $ applyCookies NoContent
 
 data User = User
-  { name :: Text
-  , email :: Text
+  { name :: String
+  , email :: String
   } deriving (Eq, Generic, Read, Show)
 
 instance Serialize User
@@ -137,8 +144,8 @@ authHandler
   :: AuthCookieSettings
   -> PersistentServerKey
   -> AuthHandler Request (WithMetadata User)
-authHandler cookieSettings serverKey = mkAuthHandler $ \request ->
-  getSession cookieSettings serverKey request `catch` handleEx >>= maybe
+authHandler authSettings serverKey = mkAuthHandler $ \request ->
+  getSession authSettings serverKey request `catch` handleEx >>= maybe
     (throwError err403 {errBody = "No cookies"})
     return
   where
@@ -190,8 +197,8 @@ authHandler cookieSettings serverKey = mkAuthHandler $ \request ->
 --   serveKeys = keysPage False <$> getKeys sks
 
 -- | Given a 'Config', this returns a Wai 'Application'.
-app :: Config -> Application
-app config =
+app :: Config -> RandomSource -> Application
+app config randomSource = do
   let authSettings =
         -- Note that we do not use "Secure" flag here. Cookies with this flag will be
         -- accepted only if they were transfered over https. This is a must for
@@ -200,17 +207,24 @@ app config =
         def {acsCookieFlags = ["HttpOnly"]}
       serverKey = mkPersistentServerKey "0123456789abcdef"
       context = authHandler authSettings serverKey :. EmptyContext
-      api = undefined -- apiServer config
-  in serveWithContext (Proxy :: Proxy Api) context api
+      api = apiServer config authSettings randomSource serverKey
+  serveWithContext (Proxy :: Proxy Api) context api
 
 -- | Given a 'Config', this returns a servant 'Server' for 'Api'
-apiServer :: Config -> Server Api
-apiServer config = enter natTrans serverRoot
+apiServer
+  :: Config
+  -> AuthCookieSettings
+  -> RandomSource
+  -> PersistentServerKey
+  -> Server Api
+apiServer config authSettings randomSource serverKey =
+  enter natTrans (serverRoot authSettings randomSource serverKey)
   where
     natTrans :: AppM :~> Handler
     natTrans = NT trans
-
-    trans :: forall a. AppM a -> Handler a
+    trans
+      :: forall a.
+         AppM a -> Handler a
     trans appM = runReaderT appM config
 
 -- -- | Application

@@ -21,15 +21,16 @@ import Network.Wai.Middleware.RequestLogger
        (logStdout, logStdoutDev)
 import Database.Persist.Sql (runSqlPool)
 import Servant
-       ((:>), (:<|>)(..), Context(..), Get, Handler, Header, Headers,
-        JSON, NoContent(NoContent), Post, PostNoContent, ReqBody,
+       ((:>), (:<|>)(..), Context(..), AuthProtect, Get, Handler, Header,
+        Headers, JSON, NoContent(NoContent), Post, PostNoContent, ReqBody,
         ServantErr, Server, ServerT, addHeader, enter, err401, err403,
         errBody, serve, serveWithContext)
 import Servant.Server.Experimental.Auth (AuthHandler, mkAuthHandler)
 import Servant.Server.Experimental.Auth.Cookie
        (AuthCookieData, AuthCookieException, AuthCookieSettings, Cookied,
-        PersistentServerKey, RandomSource, WithMetadata, acsCookieFlags,
-        addSession, emptyEncryptedSession, getSession, mkPersistentServerKey, mkRandomSource)
+        PersistentServerKey, RandomSource, WithMetadata(WithMetadata),
+        acsCookieFlags, addSession, emptyEncryptedSession, getSession,
+        mkPersistentServerKey, mkRandomSource)
 
 import App.Config (Config(..), configFromEnv)
 import App.Db (dbCheckUserPassword, doMigrations, runDb)
@@ -60,18 +61,10 @@ type Api = "v0" :> (ApiLogin :<|> ApiSearch :<|> ApiStatus)
 
 type ApiSearch = "search" :> Post '[JSON] String
 
-type ApiStatus = "status" :> Get '[JSON] Int
+type ApiStatus = AuthProtect "cookie-auth" :> "status" :> Get '[JSON] String
 
 type ApiLogin =
-  "login"
-    :> ReqBody '[JSON] Login
-    :> PostNoContent
-        '[JSON]
-        -- (Headers
-        --   '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
-        --   NoContent
-        -- )
-        (Cookied NoContent)
+  "login" :> ReqBody '[JSON] Login :> PostNoContent '[JSON] (Cookied NoContent)
 
 serverRoot
   :: AuthCookieSettings
@@ -88,8 +81,8 @@ search = do
     Left twitterErr -> undefined
     Right statuses -> undefined
 
-status :: AppM Int
-status = pure 1
+status :: WithMetadata User -> AppM String
+status (WithMetadata (User email _) _) = pure email
 
 data Login = Login
   { loginEmail :: Text
@@ -116,18 +109,12 @@ login authSettings randomSource serverKey (Login email pass) = do
         serverKey
         (User (unpack email) (unpack pass))
         NoContent
-      -- (redirectPage "/private" "Session has been started")
 
-  -- cookieSettings <- reader configCookieSettings
-  -- jwtSettings <- reader configJWTSettings
-  -- maybeUserId <- runDb $ dbCheckUserPassword email pass
-  -- case maybeUserId of
-  --   Nothing -> throwError err401
-  --   Just userId -> do
-  --     mApplyCookies <- liftIO $ acceptLogin cookieSettings jwtSettings userId
-  --     case mApplyCookies of
-  --       Nothing -> throwError err401
-  --       Just applyCookies -> pure $ applyCookies NoContent
+-- How to use curl to access login and status:
+--
+-- $ curl --verbose --request POST --header 'Content-Type: application/json' -d '{"loginEmail": "user@google.com", "loginPassword": "somepassword"}' 'http://localhost:8105/v0/login'
+--
+-- $ curl --verbose --request GET --cookie 'Session=Z0wv2YJSTMch0teESKV2vzIwMTcxMDAzMjM0OTU4iY+J6rt+rMT2BGWjQZAepGgBVb4uGyh6yqHxI6CN/YoQIGQuvx+frmcn/5dPbmGt1BY6gDi41yq8Cth8Ork3FWro7yKSEnbSao9EmhwORDg=' --header 'Content-Type: application/json' 'http://localhost:8105/v0/status'
 
 data User = User
   { name :: String
@@ -151,50 +138,6 @@ authHandler authSettings serverKey = mkAuthHandler $ \request ->
   where
     handleEx :: AuthCookieException -> Handler (Maybe (WithMetadata User))
     handleEx ex = throwError err403 {errBody = fromStrict . pack $ show ex}
-
--- | Implementation
--- server ::
---   :: AuthCookieSettings
---   -> (IO ())
---   -> RandomSource
---   -> PersistentServerKey
---   -> Server ExampleAPI
--- server settings generateKey rs sks =
---        serveHome
---   :<|> serveLogin
---   :<|> serveLoginPost
---   :<|> serveLogout
---   :<|> servePrivate
---   :<|> serveWhoami
---   :<|> serveKeys where
-
-
---   serveHome = return homePage
---   serveLogin = return (loginPage True)
-
---   serveLoginPost LoginForm {..} =
---     case userLookup lfUsername lfPassword usersDB of
---       Nothing   -> return $ addHeader emptyEncryptedSession (loginPage False)
---       Just uid  -> addSession'
---         (Account uid lfUsername lfPassword)
---         (redirectPage "/private" "Session has been started")
-
---   serveLogout = removeSession settings (redirectPage "/" "Session has been terminated")
-
---   serveWhoami Nothing = return $ whoamiPage Nothing
---   serveWhoami (Just h) = do
---     mwm <- getHeaderSession settings sks h `catch` handleEx
---     return $ whoamiPage $ wmData <$> mwm
---     where
---       handleEx :: AuthCookieException -> Handler (Maybe (WithMetadata Account))
---       handleEx _ex = return Nothing
-
---   servePrivate = cookied settings rs sks (Proxy :: Proxy Account) servePrivate'
-
---   servePrivate' :: Account -> Handler Markup
---   servePrivate' (Account uid u p) = return $ privatePage uid u p
-
---   serveKeys = keysPage False <$> getKeys sks
 
 -- | Given a 'Config', this returns a Wai 'Application'.
 app :: Config -> RandomSource -> Application
@@ -226,95 +169,3 @@ apiServer config authSettings randomSource serverKey =
       :: forall a.
          AppM a -> Handler a
     trans appM = runReaderT appM config
-
--- -- | Application
--- app :: (ServerKeySet s)
---   => AuthCookieSettings
---   -> IO () -- ^ An action to create a new key
---   -> RandomSource
---   -> s
---   -> Application
--- app settings generateKey rs sks = serveWithContext
---   (Proxy :: Proxy ExampleAPI)
---   ((authHandler settings sks) :. EmptyContext)
---   (server settings generateKey rs sks)
-
-----------------
--- Auth stuff --
-----------------
-
--- data User = User { name :: String, email :: String }
---    deriving (Eq, Generic, Read, Show)
-
--- instance ToJSON User
--- instance ToJWT User
--- instance FromJSON User
--- instance FromJWT User
-
--- data Login = Login { loginEmail :: Text, loginPassword :: Text }
---    deriving (Eq, Generic, Read, Show)
-
--- instance ToJSON Login
--- instance FromJSON Login
-
-
--- type Protected
---      = "name" :> Get '[JSON] String
---   :<|> "email" :> Get '[JSON] String
-
--- -- | 'Protected' will be protected by 'auths', which we still have to specify.
--- protected :: AuthResult User -> Server Protected
--- protected (Authenticated user) = return (name user) :<|> return (email user)
--- protected BadPassword = undefined :<|> (liftIO (print "badpassword") *> throwError err401)
--- protected NoSuchUser = undefined :<|> (liftIO (print "no such user") *> throwError err401)
--- protected Indefinite = undefined :<|> (liftIO (print "indefinite") *> throwError err401)
-
--- login'
---   :: CookieSettings
---   -> JWTSettings
---   -> Login
---   -> Handler
---       (Headers
---         '[Header "Set-Cookie" SetCookie, Header "Set-Cookie" SetCookie]
---         NoContent
---       )
--- login' cookieSettings jwtSettings (Login email pass) = do
---   maybeUserId <- runDb $ dbCheckUserPassword email pass
---   case maybeUserId of
---     Nothing -> throwError err401
---     Just userId -> do
---       mApplyCookies <- liftIO $ acceptLogin cookieSettings jwtSettings usr
---       case mApplyCookies of
---         Nothing -> throwError err401
---         Just applyCookies -> pure $ applyCookies NoContent
-
--- type TestApi auths = (Auth auths User :> Protected) :<|> ApiLogin
-
--- server :: CookieSettings -> JWTSettings -> Server (TestApi auths)
--- server cs jwts = protected :<|> login' cs jwts
-
--- Examples of running it:
---
--- $ curl -v \
---     -X POST \
---     -H "Content-Type: application/json" \
---     -d '{"username": "hello", "password": "hello"}' \
---     http://localhost:7250/login
---
--- $ curl -v \
---     -X POST \
---     -H "Content-Type: application/json" \
---     -d '{"username": "Ali Baba", "password": "Open Sesame"}' \
---     http://localhost:7250/login
---
--- $ curl -v \
---     -H "Content-Type: application/json"
---     -X GET \
---     http://localhost:7250/name
---
--- $ curl -v \
---     -X GET \
---     -H "Content-Type: application/json" \
---     -H 'X-XSRF-TOKEN: Oj79TaT2vRCKuVLPYZcnXi2iwEXUbxpH5m1OtkMfecA=' \
---     --cookie 'JWT-Cookie=eyJhbGciOiJIUzI1NiJ9.eyJkYXQiOnsiZW1haWwiOiJhbGlAZW1haWwuY29tIiwibmFtZSI6IkFsaSBCYWJhIn19.R-jyWgSpyGdSLJ9KhHmx6O9xQ9CLsHgEp05edIE3fpQ; XSRF-TOKEN=Oj79TaT2vRCKuVLPYZcnXi2iwEXUbxpH5m1OtkMfecA=' \
---     http://localhost:7250/email
